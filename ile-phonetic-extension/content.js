@@ -68,7 +68,6 @@
     isRecording: false,
     recorder: null,
     referenceAudioUrl: null,
-    referenceFeaturesUrl: null,
     referenceFeatures: null,
     learnerResult: null,
     comparisonResult: null,
@@ -123,35 +122,6 @@
         if (el.getAttribute('data-src')) return el.getAttribute('data-src');
       }
     }
-    return null;
-  }
-
-  /**
-   * Get the URL to the pre-computed features JSON.
-   * Looks for data-features attribute on the audio element,
-   * or infers it from the audio URL by swapping the extension.
-   */
-  function getSourceFeaturesUrl() {
-    // First: check for explicit data-features attribute on audio element
-    for (const sel of CONFIG.selectors.sourceAudio) {
-      const candidates = document.querySelectorAll(sel);
-      for (const el of candidates) {
-        if (el.closest('#ile-phonetic-panel')) continue;
-        const featuresUrl = el.getAttribute('data-features');
-        if (featuresUrl) return featuresUrl;
-      }
-    }
-
-    // Second: check for a separate element with the features URL
-    const featuresEl = document.querySelector('[data-phonetic-features]');
-    if (featuresEl) return featuresEl.getAttribute('data-phonetic-features');
-
-    // Third: infer from audio URL — replace extension with .features.json
-    const audioUrl = getSourceAudioUrl();
-    if (audioUrl) {
-      return audioUrl.replace(/\.[^.]+$/, '.features.json');
-    }
-
     return null;
   }
 
@@ -264,7 +234,6 @@
 
   async function loadReference() {
     const audioUrl = getSourceAudioUrl();
-    const featuresUrl = getSourceFeaturesUrl();
     const text = getSourceText();
 
     const sentenceEl = document.getElementById('ipc-sentence');
@@ -286,7 +255,6 @@
     // Skip if same audio already loaded
     if (audioUrl && audioUrl === state.referenceAudioUrl && state.referenceFeatures) return;
     state.referenceAudioUrl = audioUrl;
-    state.referenceFeaturesUrl = featuresUrl;
     state.referenceFeatures = null;
 
     if (!audioUrl) {
@@ -295,23 +263,29 @@
     }
 
     try {
-      // Step 1: Analyze reference audio with JS (same code that analyzes learner)
+      // Step 1: Decode reference audio to Float32
       setStatus('Analyzing reference audio…', 'analyzing');
       const refAudio = await AudioAnalyzer.decodeAudioFromUrl(audioUrl);
+
+      // Step 2: Extract JS features (pitch, energy, rhythm — for prosody comparison)
       state.referenceFeatures = AudioAnalyzer.extractFeatures(refAudio.float32Data, refAudio.sampleRate);
 
-      // Step 2: Load phoneme labels from JSON (the neural net output)
-      if (featuresUrl) {
+      // Step 3: Get phonemes from the native host (same pipeline as learner)
+      if (state.phonemeServerAvailable) {
         try {
-          const response = await fetch(featuresUrl);
-          if (response.ok) {
-            const json = await response.json();
-            state.referenceFeatures.phonemes = json.phonemes || null;
-            console.log('[IPC] Phoneme labels loaded:', json.phonemes?.rawIPA);
+          setStatus('Getting reference phonemes…', 'analyzing');
+          const refPhonemes = await recognizePhonemes(refAudio.float32Data, refAudio.sampleRate);
+
+          if (refPhonemes?.status === 'downloading') {
+            // Model is downloading — phonemes will be available on next try
+            setStatus(refPhonemes.message || 'Downloading model…', 'analyzing');
+          } else if (refPhonemes?.phonemes) {
+            state.referenceFeatures.phonemes = refPhonemes;
+            console.log('[IPC] Reference IPA (from native host):', refPhonemes.rawIPA);
           }
         } catch (err) {
-          console.warn('[IPC] Could not load phoneme labels:', err);
-          // Not fatal — acoustic comparison still works, just no phoneme labels
+          console.warn('[IPC] Could not get reference phonemes from host:', err);
+          // Not fatal — prosody comparison still works
         }
       }
 
@@ -564,71 +538,83 @@
         energy: null,
       };
 
-      // ── Step 1: Phoneme analysis via local server (the real assessment) ──
-      if (state.phonemeServerAvailable && state.referenceFeatures.phonemes) {
+      // ── Step 1: Phoneme analysis via native host ──
+      if (state.phonemeServerAvailable) {
         try {
-          setStatus('Running phoneme analysis…', 'analyzing');
-          const serverResult = await recognizePhonemes(result.float32Data, result.sampleRate);
-          comparison.learnerPhonemes = serverResult;
-          comparison.refPhonemes = state.referenceFeatures.phonemes;
-
-          console.log('[IPC] Reference IPA:', comparison.refPhonemes.rawIPA);
-          console.log('[IPC] Learner IPA:  ', serverResult.rawIPA);
-
-          // Diff the phoneme sequences
-          const diff = diffPhonemes(
-            comparison.refPhonemes.phonemes,
-            serverResult.phonemes
-          );
-          comparison.phonemeDiff = diff;
-
-          const pct = Math.round(diff.accuracy * 100);
-          console.log('[IPC] Phoneme accuracy:', pct + '%');
-
-          // Build phoneme assessment
-          if (diff.accuracy >= 0.85) {
-            comparison.assessments.push({
-              dimension: 'phoneme accuracy', level: 'good', priority: 1,
-              message: `Phoneme accuracy: ${pct}% — your sounds closely match the reference.`
-            });
-          } else if (diff.accuracy >= 0.6) {
-            const errors = diff.alignment
-              .filter(a => a.type === 'substitute')
-              .slice(0, 4)
-              .map(a => `/${a.expected.phoneme}/ → /${a.actual.phoneme}/`);
-            comparison.assessments.push({
-              dimension: 'phoneme accuracy', level: 'fair', priority: 1,
-              message: `Phoneme accuracy: ${pct}%. ${errors.length > 0 ? 'Substitutions: ' + errors.join(', ') : ''}`
-            });
-          } else {
-            comparison.assessments.push({
-              dimension: 'phoneme accuracy', level: 'needs_work', priority: 1,
-              message: `Phoneme accuracy: ${pct}%. Significant differences — listen to the reference and try again.`
-            });
+          // Get reference phonemes if we don't have them yet
+          if (!state.referenceFeatures.phonemes) {
+            setStatus('Getting reference phonemes…', 'analyzing');
+            const refAudio = await AudioAnalyzer.decodeAudioFromUrl(state.referenceAudioUrl);
+            const refPhonemes = await recognizePhonemes(refAudio.float32Data, refAudio.sampleRate);
+            if (refPhonemes?.phonemes) {
+              state.referenceFeatures.phonemes = refPhonemes;
+            }
           }
 
-          // Post results to the website via custom event
-          document.dispatchEvent(new CustomEvent('ile-phoneme-result', {
-            detail: {
-              referenceIPA: comparison.refPhonemes.rawIPA,
-              learnerIPA: serverResult.rawIPA,
-              accuracy: diff.accuracy,
-              alignment: diff.alignment,
-              sourceText: state.currentText,
+          if (state.referenceFeatures.phonemes) {
+            setStatus('Running phoneme analysis…', 'analyzing');
+            const serverResult = await recognizePhonemes(result.float32Data, result.sampleRate);
+            comparison.learnerPhonemes = serverResult;
+            comparison.refPhonemes = state.referenceFeatures.phonemes;
+
+            console.log('[IPC] Reference IPA:', comparison.refPhonemes.rawIPA);
+            console.log('[IPC] Learner IPA:  ', serverResult.rawIPA);
+
+            // Diff the phoneme sequences
+            const diff = diffPhonemes(
+              comparison.refPhonemes.phonemes,
+              serverResult.phonemes
+            );
+            comparison.phonemeDiff = diff;
+
+            const pct = Math.round(diff.accuracy * 100);
+            console.log('[IPC] Phoneme accuracy:', pct + '%');
+
+            // Build phoneme assessment
+            if (diff.accuracy >= 0.85) {
+              comparison.assessments.push({
+                dimension: 'phoneme accuracy', level: 'good', priority: 1,
+                message: `Phoneme accuracy: ${pct}% — your sounds closely match the reference.`
+              });
+            } else if (diff.accuracy >= 0.6) {
+              const errors = diff.alignment
+                .filter(a => a.type === 'substitute')
+                .slice(0, 4)
+                .map(a => `/${a.expected.phoneme}/ → /${a.actual.phoneme}/`);
+              comparison.assessments.push({
+                dimension: 'phoneme accuracy', level: 'fair', priority: 1,
+                message: `Phoneme accuracy: ${pct}%. ${errors.length > 0 ? 'Substitutions: ' + errors.join(', ') : ''}`
+              });
+            } else {
+              comparison.assessments.push({
+                dimension: 'phoneme accuracy', level: 'needs_work', priority: 1,
+                message: `Phoneme accuracy: ${pct}%. Significant differences — listen to the reference and try again.`
+              });
             }
-          }));
+
+            // Post results to the website via custom event
+            document.dispatchEvent(new CustomEvent('ile-phoneme-result', {
+              detail: {
+                referenceIPA: comparison.refPhonemes.rawIPA,
+                learnerIPA: serverResult.rawIPA,
+                accuracy: diff.accuracy,
+                alignment: diff.alignment,
+                sourceText: state.currentText,
+              }
+            }));
+          }
 
         } catch (err) {
           console.warn('[IPC] Phoneme host error:', err);
           comparison.assessments.push({
             dimension: 'phoneme analysis', level: 'fair', priority: 1,
-            message: 'Phoneme host not connected. Run install_host.py to enable pronunciation feedback.'
+            message: 'Phoneme analysis failed: ' + err.message
           });
         }
-      } else if (!state.phonemeServerAvailable) {
+      } else {
         comparison.assessments.push({
           dimension: 'phoneme analysis', level: 'fair', priority: 1,
-          message: 'Phoneme host not connected. Install the native host for detailed pronunciation feedback.'
+          message: 'Phoneme host not connected. Run setup.py to enable pronunciation feedback.'
         });
       }
 
@@ -1323,7 +1309,6 @@
   function resetForNewSlide() {
     state.referenceFeatures = null;
     state.referenceAudioUrl = null;
-    state.referenceFeaturesUrl = null;
     state.learnerResult = null;
     state.comparisonResult = null;
 
