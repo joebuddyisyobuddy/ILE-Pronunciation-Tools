@@ -1,0 +1,29 @@
+ILE Pronunciation Coach — Quick Start
+======================================
+
+1. Install Python (skip if you already have it)
+   - Open the "python-installer" folder
+   - Double-click the installer
+   - CHECK "Add Python to PATH" ← don't miss this
+   - Click Install Now
+   - Close and reopen your terminal
+
+2. Install the extension
+   - Open chrome://extensions
+   - Turn on Developer mode (top right)
+   - Click "Load unpacked"
+   - Select the "ile-phonetic-extension" folder
+
+3. Run setup
+   - Open terminal (Win+R, type cmd, Enter)
+   - cd C:\path\to\ILE-Pronunciation-Tools
+   - python setup.py
+   - Wait for it to finish (~5 min first time)
+
+4. Reload extension
+   - Go back to chrome://extensions
+   - Click reload on ILE Phonetic Coach
+
+5. Done — open a lesson and record
+
+Stuck? Paste your error into claude.ai
