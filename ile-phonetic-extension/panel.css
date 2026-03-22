@@ -1,0 +1,398 @@
+/* ─── ILE Phonetic Coach Panel ─────────────────────────────── */
+
+#ile-phonetic-panel {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 420px;
+  max-height: 600px;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  z-index: 999999;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+#ile-phonetic-panel.collapsed {
+  max-height: 52px;
+  width: 260px;
+  cursor: pointer;
+}
+
+/* ─── Header ────────────────────────────────────────────────── */
+
+#ile-phonetic-panel .panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+#ile-phonetic-panel .panel-header .title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#ile-phonetic-panel .panel-header .title .icon {
+  font-size: 16px;
+}
+
+#ile-phonetic-panel .panel-header .collapse-btn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+/* ─── Body ──────────────────────────────────────────────────── */
+
+#ile-phonetic-panel .panel-body {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ─── Source sentence display ───────────────────────────────── */
+
+#ile-phonetic-panel .source-text {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+#ile-phonetic-panel .source-text .label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+#ile-phonetic-panel .source-text .sentence {
+  font-size: 15px;
+  line-height: 1.5;
+  color: #fff;
+}
+
+/* ─── Controls ──────────────────────────────────────────────── */
+
+#ile-phonetic-panel .controls {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+#ile-phonetic-panel .btn {
+  flex: 1;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+#ile-phonetic-panel .btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+#ile-phonetic-panel .btn:active {
+  transform: translateY(0);
+}
+
+#ile-phonetic-panel .btn-record {
+  background: #e74c3c;
+  color: #fff;
+}
+
+#ile-phonetic-panel .btn-record.recording {
+  background: #c0392b;
+  animation: pulse 1s infinite;
+}
+
+#ile-phonetic-panel .btn-play {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e0e0e0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#ile-phonetic-panel .btn-play:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#ile-phonetic-panel .btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.5); }
+  50% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
+}
+
+/* ─── Status / loading ──────────────────────────────────────── */
+
+#ile-phonetic-panel .status {
+  text-align: center;
+  padding: 8px;
+  font-size: 12px;
+  color: #888;
+}
+
+#ile-phonetic-panel .status.analyzing {
+  color: #f39c12;
+}
+
+#ile-phonetic-panel .status.error {
+  color: #e74c3c;
+}
+
+/* ─── Visualization canvases ────────────────────────────────── */
+
+#ile-phonetic-panel .viz-section {
+  margin-bottom: 14px;
+}
+
+#ile-phonetic-panel .viz-section .viz-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #666;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#ile-phonetic-panel .viz-section canvas {
+  width: 100%;
+  height: 120px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  display: block;
+}
+
+#ile-phonetic-panel #ipc-mfcc-canvas {
+  height: 80px;
+}
+
+#ile-phonetic-panel #ipc-vowel-canvas {
+  height: 160px;
+}
+
+/* ─── Assessment badges ─────────────────────────────────────── */
+
+#ile-phonetic-panel .assessments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+#ile-phonetic-panel .assessment {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+#ile-phonetic-panel .assessment .badge {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
+}
+
+#ile-phonetic-panel .assessment .badge.good { background: #2ecc71; }
+#ile-phonetic-panel .assessment .badge.fair { background: #f39c12; }
+#ile-phonetic-panel .assessment .badge.needs_work { background: #e74c3c; }
+
+#ile-phonetic-panel .assessment .dim-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #999;
+  margin-bottom: 2px;
+}
+
+#ile-phonetic-panel .assessment .message {
+  font-size: 13px;
+  line-height: 1.4;
+  color: #ccc;
+}
+
+/* ─── Waveform visualizer (live) ────────────────────────────── */
+
+#ile-phonetic-panel .waveform-live {
+  height: 40px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+/* ─── Phoneme diff ──────────────────────────────────────────── */
+
+#ile-phonetic-panel .phoneme-diff-section {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 10px;
+  border: 1px solid rgba(139, 92, 246, 0.15);
+}
+
+#ile-phonetic-panel .ph-diff-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #888;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#ile-phonetic-panel .ph-diff-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#ile-phonetic-panel .ph-diff-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#ile-phonetic-panel .ph-diff-phonemes {
+  font-size: 15px;
+  line-height: 1.8;
+  font-family: 'Noto Sans', 'DejaVu Sans', sans-serif;
+  flex: 1;
+  flex-wrap: wrap;
+  word-break: break-all;
+}
+
+#ile-phonetic-panel .ph-match { color: #2ecc71; }
+#ile-phonetic-panel .ph-similar { color: #f39c12; cursor: help; }
+#ile-phonetic-panel .ph-wrong { color: #e74c3c; font-weight: 600; cursor: help; }
+#ile-phonetic-panel .ph-missing { color: #e74c3c; text-decoration: line-through; cursor: help; }
+#ile-phonetic-panel .ph-extra { color: #e67e22; font-style: italic; cursor: help; }
+#ile-phonetic-panel .ph-gap { color: #444; }
+
+#ile-phonetic-panel .ph-errors {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px;
+  color: #888;
+}
+
+#ile-phonetic-panel .ph-error-item {
+  display: inline-block;
+  background: rgba(231, 76, 60, 0.1);
+  color: #e74c3c;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin: 2px 4px 2px 0;
+  font-family: 'Noto Sans', 'DejaVu Sans', sans-serif;
+}
+
+/* ─── Shared label styles (used by phoneme diff) ───────────── */
+
+#ile-phonetic-panel .word-accuracy {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+#ile-phonetic-panel .word-accuracy.good { background: rgba(46, 204, 113, 0.2); color: #2ecc71; }
+#ile-phonetic-panel .word-accuracy.fair { background: rgba(243, 156, 18, 0.2); color: #f39c12; }
+#ile-phonetic-panel .word-accuracy.poor { background: rgba(231, 76, 60, 0.2); color: #e74c3c; }
+
+#ile-phonetic-panel .word-diff-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #555;
+  width: 52px;
+  flex-shrink: 0;
+}
+
+/* ─── Empty state ───────────────────────────────────────────── */
+
+#ile-phonetic-panel .empty-state {
+  text-align: center;
+  padding: 24px 16px;
+  color: #666;
+}
+
+#ile-phonetic-panel .empty-state .icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+#ile-phonetic-panel .empty-state .msg {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ─── Settings row ──────────────────────────────────────────── */
+
+#ile-phonetic-panel .settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  margin-top: 4px;
+}
+
+#ile-phonetic-panel .settings-row .setting-label {
+  font-size: 11px;
+  color: #666;
+}
+
+#ile-phonetic-panel .settings-row select {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #ccc;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+}

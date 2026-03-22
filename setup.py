@@ -5,18 +5,18 @@ ILE Pronunciation Coach — One-Click Setup
 Usage:
     python setup.py                     # auto-detect extension ID
     python setup.py EXTENSION_ID        # provide ID manually
+    python setup.py --full              # download full-precision model (1.26 GB)
     python setup.py --uninstall         # remove native host registration
 
 What happens:
     1. Check Python version (3.10+)
-    2. Install runtime dependencies (librosa, onnxruntime, numpy)
-    3. Build the phoneme model locally (downloads ~3 GB on first run)
+    2. Install dependencies (librosa, onnxruntime, numpy)
+    3. Download the phoneme model from HuggingFace (~318 MB)
     4. Find your browser extension automatically
     5. Register the native messaging host
     6. Smoke test
 
-First run takes 5-10 minutes (downloading PyTorch + model weights).
-Subsequent runs take seconds (skips build if model exists).
+Takes about 2 minutes on a typical connection.
 """
 
 import sys
@@ -27,7 +27,6 @@ import json
 import shutil
 import stat
 import re
-import tempfile
 from pathlib import Path
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -35,13 +34,19 @@ from pathlib import Path
 HOST_NAME = "com.ile.phoneme_host"
 EXTENSION_NAME = "ILE Phonetic Coach"
 
-RUNTIME_DEPS = ["librosa", "onnxruntime", "numpy"]
-BUILD_DEPS = ["torch", "transformers", "onnx"]
+DEPENDENCIES = ["librosa", "onnxruntime", "numpy"]
 
-MODEL_FILE = "wav2vec2-phoneme.onnx"
-VOCAB_FILE = "vocab.json"
-MODEL_MIN_SIZE_MB = 100  # anything smaller is not a real model
+# HuggingFace direct download URLs (onnx-community pre-built models)
+HF_BASE = "https://huggingface.co/onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX/resolve/main"
+MODELS = {
+    "int8":  {"url": f"{HF_BASE}/onnx/model_int8.onnx",  "size": "318 MB",  "file": "model_int8.onnx"},
+    "full":  {"url": f"{HF_BASE}/onnx/model.onnx",        "size": "1.26 GB", "file": "model.onnx"},
+    "q4":    {"url": f"{HF_BASE}/onnx/model_q4.onnx",     "size": "242 MB",  "file": "model_q4.onnx"},
+    "fp16":  {"url": f"{HF_BASE}/onnx/model_fp16.onnx",   "size": "632 MB",  "file": "model_fp16.onnx"},
+}
+DEFAULT_MODEL = "int8"
 
+MODEL_MIN_SIZE_MB = 50  # anything smaller is not a real model
 MIN_PYTHON = (3, 10)
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -49,7 +54,6 @@ MIN_PYTHON = (3, 10)
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = SCRIPT_DIR / "models"
 HOST_SCRIPT = SCRIPT_DIR / "phoneme_host.py"
-EXPORT_SCRIPT = SCRIPT_DIR / "export_model.py"
 
 SYSTEM = platform.system()
 
@@ -100,14 +104,9 @@ def fatal(msg):
 
 # ─── pip helper ───────────────────────────────────────────────────────────────
 
-def pip_install(packages, label=None):
-    """Install packages via pip, handling system Python edge cases."""
-    if not packages:
-        return
-
+def pip_install(packages):
     pip_cmd = [sys.executable, "-m", "pip", "install", "--quiet",
                "--disable-pip-version-check"] + packages
-
     try:
         subprocess.run(pip_cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
@@ -117,19 +116,15 @@ def pip_install(packages, label=None):
             try:
                 subprocess.run(pip_cmd, check=True, capture_output=True, text=True)
             except subprocess.CalledProcessError as e2:
-                fail(f"pip install failed for {label or packages}:")
+                fail("pip install failed:")
                 print(e2.stderr)
-                if SYSTEM == "Windows":
-                    fatal(f"Try: py -m pip install {' '.join(packages)}")
-                else:
-                    fatal(f"Try: python3 -m pip install {' '.join(packages)}")
+                hint = "py -m pip" if SYSTEM == "Windows" else "python3 -m pip"
+                fatal(f"Try: {hint} install {' '.join(packages)}")
         else:
-            fail(f"pip install failed for {label or packages}:")
+            fail("pip install failed:")
             print(e.stderr)
-            if SYSTEM == "Windows":
-                fatal(f"Try: py -m pip install {' '.join(packages)}")
-            else:
-                fatal(f"Try: python3 -m pip install {' '.join(packages)}")
+            hint = "py -m pip" if SYSTEM == "Windows" else "python3 -m pip"
+            fatal(f"Try: {hint} install {' '.join(packages)}")
 
 # ─── Step 1: Python version ──────────────────────────────────────────────────
 
@@ -142,96 +137,106 @@ def check_python(n, total):
               f"Download from https://python.org/downloads/")
     ok(f"Python {v.major}.{v.minor} — good")
 
-# ─── Step 2: Runtime dependencies ────────────────────────────────────────────
+# ─── Step 2: Dependencies ────────────────────────────────────────────────────
 
-def install_runtime_deps(n, total):
-    step(n, total, "Installing runtime dependencies")
-    pip_install(RUNTIME_DEPS, "runtime deps")
-    for dep in RUNTIME_DEPS:
-        ok(f"{dep}")
+def install_deps(n, total):
+    step(n, total, "Installing dependencies")
+    pip_install(DEPENDENCIES)
+    for dep in DEPENDENCIES:
+        ok(dep)
 
-# ─── Step 3: Build model ─────────────────────────────────────────────────────
+# ─── Step 3: Download model ──────────────────────────────────────────────────
 
-def model_exists_and_valid():
-    """Check if the ONNX model already exists and looks real."""
-    model_path = MODELS_DIR / MODEL_FILE
-    vocab_path = MODELS_DIR / VOCAB_FILE
+def any_model_exists():
+    """Check if any valid ONNX model exists in models/."""
+    if not MODELS_DIR.exists():
+        return None
+    for variant in MODELS.values():
+        path = MODELS_DIR / variant["file"]
+        if path.exists() and path.stat().st_size > MODEL_MIN_SIZE_MB * 1024 * 1024:
+            return path
+    return None
 
-    if not model_path.exists() or not vocab_path.exists():
-        return False
 
-    size_mb = model_path.stat().st_size / (1024 * 1024)
-    if size_mb < MODEL_MIN_SIZE_MB:
-        return False
+def download_model(n, total, variant_key=DEFAULT_MODEL):
+    step(n, total, "Downloading phoneme model")
+
+    existing = any_model_exists()
+    if existing:
+        size_mb = existing.stat().st_size / (1024 * 1024)
+        ok(f"Model already exists: {existing.name} ({size_mb:.0f} MB)")
+        _check_vocab()
+        return existing
+
+    variant = MODELS[variant_key]
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = MODELS_DIR / variant["file"]
+
+    info(f"Downloading {variant['file']} ({variant['size']}) from HuggingFace...")
+    info(f"Source: onnx-community/wav2vec2-lv-60-espeak-cv-ft-ONNX")
+
+    try:
+        import urllib.request
+
+        def _progress(block_num, block_size, total_size):
+            if total_size > 0:
+                downloaded = block_num * block_size
+                pct = min(100, downloaded * 100 // total_size)
+                mb = downloaded / (1024 * 1024)
+                total_mb = total_size / (1024 * 1024)
+                bar_len = 25
+                filled = int(bar_len * pct / 100)
+                bar = "█" * filled + "░" * (bar_len - filled)
+                print(f"\r         {dim('→')} {bar} {mb:.0f}/{total_mb:.0f} MB ({pct}%)", end="", flush=True)
+
+        urllib.request.urlretrieve(variant["url"], dest, reporthook=_progress)
+        print()  # newline after progress bar
+
+        size_mb = dest.stat().st_size / (1024 * 1024)
+        if size_mb < MODEL_MIN_SIZE_MB:
+            dest.unlink()
+            fatal(f"Downloaded file is too small ({size_mb:.1f} MB). Download may have failed.")
+
+        ok(f"Model downloaded: {variant['file']} ({size_mb:.0f} MB)")
+
+    except Exception as e:
+        if dest.exists():
+            dest.unlink()
+        fatal(f"Download failed: {e}\n"
+              f"         Try downloading manually from:\n"
+              f"         {variant['url']}\n"
+              f"         and place it in the models/ folder.")
+
+    _check_vocab()
+    return dest
+
+
+def _check_vocab():
+    """Verify vocab.json exists and is valid."""
+    vocab_path = MODELS_DIR / "vocab.json"
+    if not vocab_path.exists():
+        # Check if it's in the script directory instead
+        alt_path = SCRIPT_DIR / "vocab.json"
+        if alt_path.exists():
+            shutil.copy2(alt_path, vocab_path)
+            ok(f"Copied vocab.json to models/")
+        else:
+            warn("vocab.json not found — phoneme labels may not work")
+            info("This file should be included in the repository")
+            return
 
     try:
         with open(vocab_path, "r", encoding="utf-8") as f:
             vocab = json.load(f)
-        if len(vocab) < 10:
-            return False
-    except (json.JSONDecodeError, IOError):
-        return False
-
-    return True
-
-
-def build_model(n, total):
-    step(n, total, "Building phoneme model")
-
-    if model_exists_and_valid():
-        size_mb = (MODELS_DIR / MODEL_FILE).stat().st_size / (1024 * 1024)
-        ok(f"Model already exists ({size_mb:.0f} MB) — skipping build")
-        with open(MODELS_DIR / VOCAB_FILE, "r", encoding="utf-8") as f:
-            vocab = json.load(f)
-        ok(f"Vocab loaded — {len(vocab)} tokens")
-        return
-
-    # ── Need to build — install build dependencies ──
-    info("Model not found — building from HuggingFace weights")
-    info("This is a one-time process. It downloads ~3 GB total.")
-    print()
-
-    info("Installing build dependencies (torch, transformers, onnx)...")
-    info("torch is ~2 GB — this may take a few minutes")
-    pip_install(BUILD_DEPS, "build deps")
-    for dep in BUILD_DEPS:
-        ok(f"{dep} installed")
-
-    # ── Check export script exists ──
-    if not EXPORT_SCRIPT.exists():
-        fatal(f"export_model.py not found at {EXPORT_SCRIPT}\n"
-              "         Make sure you have the complete repository.")
-
-    # ── Run export ──
-    print()
-    info("Downloading model from HuggingFace and exporting to ONNX...")
-    info("This takes 3-8 minutes depending on your connection and CPU")
-    print()
-
-    try:
-        sys.path.insert(0, str(SCRIPT_DIR))
-        from export_model import export
-        export(output_dir=MODELS_DIR, verbose=True)
-    except Exception as e:
-        fail(f"Model export failed: {e}")
-        print()
-        info("You can retry by running setup.py again.")
-        info("Or try manually: python export_model.py")
-        fatal("Model build failed")
-
-    if not model_exists_and_valid():
-        fatal("Model was exported but doesn't look valid. Try running setup.py again.")
-
-    size_mb = (MODELS_DIR / MODEL_FILE).stat().st_size / (1024 * 1024)
-    ok(f"Model built successfully ({size_mb:.0f} MB)")
+        ok(f"Vocab loaded — {len(vocab)} phoneme tokens")
+    except (json.JSONDecodeError, IOError) as e:
+        warn(f"vocab.json may be corrupted: {e}")
 
 # ─── Step 4: Extension ID ────────────────────────────────────────────────────
 
 def get_browser_extension_dirs():
-    """Return list of (browser_name, profile, extensions_dir) for Chromium browsers."""
     home = Path.home()
     candidates = []
-
     if SYSTEM == "Windows":
         local = Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local"))
         candidates = [
@@ -246,7 +251,7 @@ def get_browser_extension_dirs():
             ("Edge",   app_support / "Microsoft Edge"),
             ("Brave",  app_support / "BraveSoftware" / "Brave-Browser"),
         ]
-    else:  # Linux
+    else:
         config = Path(os.environ.get("XDG_CONFIG_HOME", home / ".config"))
         candidates = [
             ("Chrome", config / "google-chrome"),
@@ -260,12 +265,10 @@ def get_browser_extension_dirs():
             ext_dir = user_data_dir / profile / "Extensions"
             if ext_dir.is_dir():
                 results.append((browser_name, profile, ext_dir))
-
     return results
 
 
 def find_extension_id():
-    """Scan browser directories for the ILE extension."""
     browser_dirs = get_browser_extension_dirs()
     if not browser_dirs:
         return None, None
@@ -295,12 +298,11 @@ def find_extension_id():
     if len(found) == 1:
         return found[0][0], found[0][1]
     elif len(found) > 1:
-        warn(f"Found extension in multiple browsers/profiles:")
+        warn("Found extension in multiple browsers/profiles:")
         for eid, browser, profile in found:
             info(f"  {browser} ({profile}): {eid}")
         info(f"Using: {found[0][0]} ({found[0][1]})")
         return found[0][0], found[0][1]
-
     return None, None
 
 
@@ -360,7 +362,6 @@ def get_native_hosts_dir(browser_name=None):
 def register_native_host(n, total, ext_id, browser_name=None):
     step(n, total, "Registering native messaging host")
 
-    # ── Create launcher script ──
     if SYSTEM == "Windows":
         launcher = SCRIPT_DIR / "phoneme_host.bat"
         python_path = Path(sys.executable).resolve()
@@ -381,7 +382,6 @@ def register_native_host(n, total, ext_id, browser_name=None):
         host_path = str(launcher)
         ok(f"Created {launcher.name}")
 
-    # ── Write manifest JSON ──
     manifest = {
         "name": HOST_NAME,
         "description": "ILE Pronunciation Coach — local phoneme recognition via wav2vec2",
@@ -399,9 +399,9 @@ def register_native_host(n, total, ext_id, browser_name=None):
 
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
-    ok(f"Wrote manifest → {manifest_path}")
+    ok(f"Wrote manifest to {manifest_path}")
 
-    # Register for other installed browsers too
+    # Register for other installed browsers
     if SYSTEM != "Windows":
         other_browsers = {"Chrome", "Edge", "Brave"} - {browser_name or "Chrome"}
         for other in other_browsers:
@@ -461,8 +461,8 @@ def smoke_test(n, total):
         fail("librosa import failed")
         return False
 
-    model_path = MODELS_DIR / MODEL_FILE
-    if model_path.exists() and model_path.stat().st_size > MODEL_MIN_SIZE_MB * 1024 * 1024:
+    model_path = any_model_exists()
+    if model_path:
         try:
             info("Loading model for inference test...")
             import onnxruntime as ort
@@ -475,10 +475,10 @@ def smoke_test(n, total):
             result = sess.run(None, {input_name: dummy})
             ok(f"Inference test passed — output shape: {result[0].shape}")
         except Exception as e:
-            warn(f"Model inference test failed: {e}")
+            warn(f"Inference test failed: {e}")
             info("The model may still work — try recording in the extension")
     else:
-        warn("Skipping inference test (model not available)")
+        warn("Skipping inference test (no model found)")
 
     return True
 
@@ -486,7 +486,6 @@ def smoke_test(n, total):
 
 def uninstall():
     print(f"\n  {bold('Uninstalling ILE Pronunciation Coach native host...')}\n")
-
     removed = False
 
     if SYSTEM != "Windows":
@@ -502,7 +501,6 @@ def uninstall():
             manifest.unlink()
             ok(f"Removed {manifest}")
             removed = True
-
         try:
             import winreg
             for reg_path in [
@@ -528,7 +526,7 @@ def uninstall():
 
     if removed:
         print(f"\n  {green('✓ Native host unregistered.')}")
-        print(f"    Model files in models/ were kept. Delete them manually if needed.")
+        print(f"    Model files in models/ were kept. Delete manually if needed.")
         print(f"    To remove the extension, go to chrome://extensions\n")
     else:
         print(f"\n  {dim('Nothing to remove — native host was not installed.')}\n")
@@ -544,8 +542,22 @@ def main():
 
     if "--help" in args or "-h" in args:
         print(__doc__)
+        print(f"  Model variants (pass as flag):")
+        for key, v in MODELS.items():
+            default = " (default)" if key == DEFAULT_MODEL else ""
+            print(f"    --{key:6s}  {v['size']:>8s}  {v['file']}{default}")
+        print()
         sys.exit(0)
 
+    # Parse model variant
+    variant_key = DEFAULT_MODEL
+    for key in MODELS:
+        if f"--{key}" in args:
+            variant_key = key
+            args.remove(f"--{key}")
+            break
+
+    # Parse extension ID
     ext_id_arg = None
     for arg in args:
         if not arg.startswith("-"):
@@ -560,13 +572,12 @@ def main():
     total = 6
 
     check_python(1, total)
-    install_runtime_deps(2, total)
-    build_model(3, total)
+    install_deps(2, total)
+    model_path = download_model(3, total, variant_key)
     ext_id = resolve_extension_id(4, total, ext_id_arg)
     register_native_host(5, total, ext_id)
     smoke_test(6, total)
 
-    # Done
     print()
     print(f"  {dim('─' * 40)}")
     print(f"  {green('✓ Setup complete!')}")
@@ -578,7 +589,7 @@ def main():
     print()
     print(f"  {dim(f'Extension ID: {ext_id}')}")
     print(f"  {dim(f'Host name:    {HOST_NAME}')}")
-    print(f"  {dim(f'Model:        {MODELS_DIR / MODEL_FILE}')}")
+    print(f"  {dim(f'Model:        {model_path}')}")
     print()
 
 

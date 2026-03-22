@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ILE — Test Lesson Page</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .lesson-container {
+      max-width: 640px;
+      width: 90%;
+    }
+    .slide-header {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #484f58;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      padding: 40px;
+      text-align: center;
+    }
+    .source-text {
+      font-size: 28px;
+      font-weight: 600;
+      color: #f0f6fc;
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
+    .translation {
+      font-size: 16px;
+      color: #8b949e;
+      margin-bottom: 28px;
+    }
+    .audio-controls {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .audio-controls button {
+      padding: 10px 20px;
+      border-radius: 10px;
+      border: 1px solid #30363d;
+      background: #21262d;
+      color: #c9d1d9;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .audio-controls button:hover {
+      background: #30363d;
+    }
+    audio.reference-audio {
+      display: block;
+      margin: 0 auto 20px;
+      width: 100%;
+      max-width: 400px;
+    }
+    .slide-nav {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 24px;
+    }
+    .slide-nav button {
+      padding: 8px 20px;
+      border-radius: 8px;
+      border: 1px solid #30363d;
+      background: #21262d;
+      color: #c9d1d9;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .slide-nav button:hover { background: #30363d; }
+    .slide-nav button:disabled { opacity: 0.3; cursor: default; }
+    .info {
+      margin-top: 40px;
+      padding: 20px;
+      background: rgba(100, 160, 255, 0.06);
+      border: 1px solid rgba(100, 160, 255, 0.15);
+      border-radius: 12px;
+      font-size: 13px;
+      color: #8b949e;
+      line-height: 1.6;
+    }
+    .info strong { color: #c9d1d9; }
+  </style>
+</head>
+<body>
+
+<div class="lesson-container" id="app">
+  <div class="slide-header">Lesson 1 — Basic Sentences &bull; Slide <span id="slide-num">1</span> of <span id="slide-total">3</span></div>
+  
+  <div class="card">
+    <div class="source-text" id="source-text"></div>
+    <div class="translation" id="translation"></div>
+    
+    <!-- The extension will look for this audio element -->
+    <audio class="reference-audio" id="reference-audio" controls preload="auto">
+      <source src="" type="audio/mpeg" />
+    </audio>
+  </div>
+
+  <div class="slide-nav">
+    <button id="prev-btn" disabled>← Previous</button>
+    <button id="next-btn">Next →</button>
+  </div>
+
+  <div class="info">
+    <strong>This is a test page for the ILE Phonetic Coach extension.</strong><br />
+    To test: load the extension in Chrome via <code>chrome://extensions</code> → "Load unpacked",
+    then open this page. The Phonetic Coach panel should appear in the bottom-right corner.<br /><br />
+    Since this test page uses synthesized audio, pitch analysis will work on any <code>.mp3</code> or <code>.wav</code>
+    files you place in the <code>test-audio/</code> folder. For a quick test, you can also use
+    the browser's built-in <code>SpeechSynthesis</code> API — see the console for instructions.
+  </div>
+</div>
+
+<script>
+  // ── Test slide data ──
+  // Replace the audioUrl values with actual audio file paths for real testing.
+  // For a quick test, the extension will still load and allow recording even
+  // if reference audio is missing.
+  
+  const slides = [
+    {
+      text: "The cat sat on the mat.",
+      translation: "(English — basic sentence pattern)",
+      audioUrl: "test-audio/slide1.mp3"
+    },
+    {
+      text: "She sells seashells by the seashore.",
+      translation: "(English — sibilant practice)",
+      audioUrl: "test-audio/slide2.mp3"
+    },
+    {
+      text: "How much wood would a woodchuck chuck?",
+      translation: "(English — rhythm and stress)",
+      audioUrl: "test-audio/slide3.mp3"
+    }
+  ];
+
+  let currentSlide = 0;
+
+  function renderSlide(index) {
+    const slide = slides[index];
+    document.getElementById('source-text').textContent = slide.text;
+    document.getElementById('translation').textContent = slide.translation;
+    document.getElementById('slide-num').textContent = index + 1;
+    document.getElementById('slide-total').textContent = slides.length;
+    
+    const audioEl = document.getElementById('reference-audio');
+    const sourceEl = audioEl.querySelector('source');
+    sourceEl.src = slide.audioUrl;
+    audioEl.load();
+    
+    document.getElementById('prev-btn').disabled = index === 0;
+    document.getElementById('next-btn').disabled = index === slides.length - 1;
+  }
+
+  document.getElementById('prev-btn').addEventListener('click', () => {
+    if (currentSlide > 0) { currentSlide--; renderSlide(currentSlide); }
+  });
+
+  document.getElementById('next-btn').addEventListener('click', () => {
+    if (currentSlide < slides.length - 1) { currentSlide++; renderSlide(currentSlide); }
+  });
+
+  renderSlide(0);
+
+  // ── Generate test audio with SpeechSynthesis (fallback) ──
+  console.log('%c[ILE Test Page] To generate test audio, run:', 'color: #64a0ff');
+  console.log('%cgenerateTTSAudio()', 'color: #ffa03c; font-weight: bold');
+  
+  window.generateTTSAudio = async function() {
+    for (const slide of slides) {
+      const utterance = new SpeechSynthesisUtterance(slide.text);
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+      speechSynthesis.speak(utterance);
+    }
+    console.log('Spoke all slides using browser TTS. For file-based testing, place .mp3 files in test-audio/');
+  };
+</script>
+
+</body>
+</html>
