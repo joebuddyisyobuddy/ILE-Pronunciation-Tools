@@ -1,0 +1,69 @@
+name: Build Native Host Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: phoneme_host.exe
+            pyinstaller_args: --name phoneme_host
+          - os: macos-latest
+            artifact: phoneme_host-mac
+            pyinstaller_args: --name phoneme_host-mac
+          - os: ubuntu-latest
+            artifact: phoneme_host-linux
+            pyinstaller_args: --name phoneme_host-linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install librosa onnxruntime numpy pyinstaller
+
+      - name: Build binary
+        run: |
+          pyinstaller \
+            --onefile \
+            --noconfirm \
+            --clean \
+            ${{ matrix.pyinstaller_args }} \
+            ile-phonetic-tools/phoneme_host.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            phoneme_host.exe/phoneme_host.exe
+            phoneme_host-mac/phoneme_host-mac
+            phoneme_host-linux/phoneme_host-linux
+          generate_release_notes: true
