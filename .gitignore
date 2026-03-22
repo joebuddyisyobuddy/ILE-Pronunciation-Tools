@@ -1,0 +1,7 @@
+models/*.onnx
+models/*.tmp
+phoneme_host.bat
+phoneme_host.sh
+com.ile.phoneme_host.json
+__pycache__/
+*.pyc
